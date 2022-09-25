@@ -1,22 +1,32 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
-</head>
-<body>
-    
+    <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+                <meta http-equiv="X-UA-Compatible" content="IE=edge">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                        <title>Document</title>
+                    </head>
+                   
+                    <body>
+                        <div>Balance: <p id="balance">0  </p></div>
+                        <input type="button" value="Reload Balance" onclick="loadBalance()">
 
-    <script>
-        let evtSource = new EventSource("/notification"); 
-        evtSource.onmessage =(event) =>{
-            console.log(event)
-            let data = JSON.parse(event.data)
-            alert(`Rp. `+data["amount"] + ` from `+data["from"]+ `.
-            message: `+data["message"])
-        }
-    </script>
-</body>
-</html>
+
+                        <script>
+                            async function loadBalance(){
+                              let fetched =  await fetch("balance", {
+                                    method: 'GET', // Default is 'get'
+                                });
+                             let   data = await fetched.json()
+                                        document.getElementById("balance").innerText = "Rp. " + data["amount"];
+                            };
+    
+                            const evtSource = new EventSource("/notification"); 
+    evtSource.onmessage =(event) =>{
+                                console.log(event)
+        let data = JSON.parse(event.data)
+                            alert(`Rp. `+data["amount"] + ` from `+data["from"]+ `.\nmessage: `+data["message"])
+    }
+                        </script>
+                    </body>
+                </html>

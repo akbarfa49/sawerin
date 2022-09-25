@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,6 +17,7 @@ import (
 )
 
 func main() {
+
 	router := chi.NewRouter()
 	User(router)
 	Sawer(router)
@@ -37,25 +39,32 @@ type amount uint64
 var bank map[user]amount = make(map[user]amount)
 
 type UserBankBalance struct {
-	User   string
-	Amount uint64
+	User   string `json:"user"`
+	Amount uint64 `json:"amount"`
 }
 
 var RedPandaHost = `localhost:9092`
 
 func User(router *chi.Mux) {
-	type Login_In struct {
-		Username string `json:"username"`
-	}
-	router.Post(`/login`, func(w http.ResponseWriter, r *http.Request) {
-		l := Login_In{}
-		if err := json.NewDecoder(r.Body).Decode(&l); err != nil {
-			w.WriteHeader(400)
-			w.Write([]byte(`bad request`))
-			return
-		}
-		http.SetCookie(w, &http.Cookie{Name: `username`, Value: l.Username, Expires: time.Now().Add(1 * time.Hour), SameSite: http.SameSiteDefaultMode, HttpOnly: true})
+	// type Login_In struct {
+	// 	Username string `json:"username"`
+	// }
+	router.Route(`/login/{username}`, func(r chi.Router) {
+		r.Get(`/`, func(w http.ResponseWriter, r *http.Request) {
+
+			username := chi.URLParam(r, `username`)
+			if username == `` {
+				w.WriteHeader(400)
+				w.Write([]byte(`bad request`))
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: `username`, Value: username, Expires: time.Now().Add(1 * time.Hour), HttpOnly: true, Path: `/`, SameSite: http.SameSiteDefaultMode})
+			w.Header().Add(`location`, `http://localhost:6090/`)
+			w.WriteHeader(302)
+
+		})
 	})
+
 	router.Get(`/balance`, func(w http.ResponseWriter, r *http.Request) {
 		ck, err := r.Cookie(`username`)
 		if err == http.ErrNoCookie {
@@ -100,11 +109,12 @@ func bankTopic() string {
 
 // Banking stuff
 func Bank() {
+	//i want to count all money from redpanda because i still have no persistent storage
 	reader := redpanda.NewReader(redpanda.ReaderConfig{
-		Brokers:     []string{RedPandaHost},
-		Topic:       bankTopic(),
-		GroupID:     `1`,
-		StartOffset: redpanda.FirstOffset,
+		Brokers: []string{RedPandaHost},
+		Topic:   bankTopic(),
+		// GroupID:     `1`,
+		// StartOffset: redpanda.FirstOffset,
 	})
 read:
 	for {
@@ -227,25 +237,53 @@ func Notification(router *chi.Mux) {
 			Topic:   notificationTopic(ck.Value),
 			GroupID: `1`,
 		})
-		rpMsgChan := make(chan redpanda.Message)
+		rpMsgChan := make(chan redpanda.Message, 2)
 		rpErrChan := make(chan error)
 		defer reader.Close()
 		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
 		go func(msgChan chan<- redpanda.Message, errChan chan<- error) {
 			for {
 				msg, err := reader.FetchMessage(ctx)
 				if err != nil {
-					rpErrChan <- err
+					// todo
+
+					if err == context.Canceled {
+						fmt.Println(err)
+						close(msgChan)
+						close(errChan)
+						break
+					}
+					errChan <- err
 				}
 				msgChan <- msg
 			}
 		}(rpMsgChan, rpErrChan)
 		byt := []byte{}
 		id := 1
+
 		for {
 			select {
+
 			case <-r.Context().Done():
+				cancel()
+				//clearing, actually no need wg
+				{
+					wg := sync.WaitGroup{}
+					wg.Add(2)
+					go func(msgChan chan redpanda.Message, wait *sync.WaitGroup) {
+						for range msgChan {
+
+						}
+						wg.Done()
+					}(rpMsgChan, &wg)
+					go func(errChan chan error, wait *sync.WaitGroup) {
+						for range errChan {
+						}
+						wg.Done()
+					}(rpErrChan, &wg)
+					wg.Wait()
+				}
+
 				log.Println(`connection closed`)
 				return
 			case msg := <-rpMsgChan:
